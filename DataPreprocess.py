@@ -89,9 +89,6 @@ def negated(input_words, include_nt=True):
     if include_nt:
         if any("n't" in word.lower() for word in input_words):
             return True
-#     for first, second in pairwise(input_words):
-#         if second.lower() == "least" and first.lower() != 'at':
-#             return True
     return False
 
 def negated_word(word, include_nt=True):
@@ -108,7 +105,7 @@ def get_negation_statistic(data_frame):
     #Negation Counter
     total_negation_count = 0
     total_negation_sentence_count = 0
-    
+    max_negation_count = 0
     #Total sentence counter
     total_sentence_count = 0
     
@@ -129,45 +126,125 @@ def get_negation_statistic(data_frame):
                 if review_negation_count == 0: #There's no negation word
                     pass
                 else: #There's a negation
-                    if review_negation_count > 1:
-                        print(sentence)
+                    if review_negation_count > max_negation_count:
+                        print(review_negation_count)
+                        max_negation_count = review_negation_count
                     total_negation_count += review_negation_count
                     total_negation_sentence_count += 1
                     review_negation_count = 0
-    return total_negation_count, total_negation_sentence_count, total_sentence_count, total_negation_count/total_negation_sentence_count
+    return total_negation_count, total_negation_sentence_count, total_sentence_count, total_negation_count/total_negation_sentence_count, max_negation_count
     
 stop_words = set(stopwords.words('english'))
-def get_sentiment(sentence):
-    sentiment_list = []
-    sentiment_pos_scores = []
-    sentiment_neg_scores = []
-    sentence_token = nltk.word_tokenize(sentence)
+def get_sentiment(sentence_token):
+    positive_index = []
+    negative_index = []
+#     sentence_token = nltk.word_tokenize(sentence)
     for wordIndex in range(len(sentence_token)):
         word = sentence_token[wordIndex].lower()
         if word in stop_words or word in NEGATE:
             pass
         else:
-            token = lesk(sentence_token, word)
-            if token is not None:
-                token_name = token.name()
-                pos_score = swn.senti_synset(token_name).pos_score()
-                neg_score = swn.senti_synset(token_name).neg_score()
-                if pos_score > 0.125 or neg_score > 0.125:
-                    sentiment_list.append(wordIndex)
-                    sentiment_pos_scores.append[pos_score]
-                    sentiment_neg_scores.append[neg_score]
-    return sentiment_list, sentiment_pos_scores, sentiment_neg_scores
+            if word in NEGATIVE:
+                  negative_index.append(wordIndex)  
+            elif word in POSITIVE:
+                positive_index.append(wordIndex)
+    return positive_index, negative_index
 
 
-def get_negation(sentence):
+def get_negation(sentence_token):
     negation_list = []
-    sentence_token = nltk.word_tokenize(sentence)
+    pos_after_negation = []
     for wordIndex in range(len(sentence_token)):
         word = sentence_token[wordIndex].lower()
         if negated_word(word):
             negation_list.append(wordIndex)
+            
     return negation_list, len(negation_list)
     
+def is_closest_sentiment_positive(value, pos_list, neg_list):
+    smallest = 1000000
+    positive = True
+    for item in pos_list:
+        if item > value and item < smallest:
+            smallest = item
+    for item in neg_list:
+        if item > value and item < smallest:
+            positive = False
+    if smallest == 1000000:
+        positive = None
+    return positive
+
+def calculate_negate_sentiment_score(value, pos_list, neg_list):
+    is_positive = True
+    closest_index = 10000000
+    for item in pos_list:
+        if item > value and item < closest_index:
+            closest_index = item
+    for item in neg_list:
+        if item > value and item < closest_index:
+            closest_index = item
+            is_positive = False
+    if closest_index == 10000000:
+        return 0
+    if is_positive == False:
+        score = 1/(closest_index - value)
+    else:
+        score = -1/(closest_index - value)
+    
+    return score
+
 
 def preprocess_sentence(sentence):
-    pass
+    vector = []
+    sentence_token = nltk.word_tokenize(sentence)
+    pos_index , neg_index = get_sentiment(sentence_token)
+    negate_index, num_negate = get_negation(sentence_token)
+    pos_score = len(pos_index)
+    neg_score = len(neg_index)
+    num_sent = pos_score + neg_score
+    if num_sent == 0:
+        return None
+    else:
+        vector.append(num_negate)
+        vector.append(num_sent)
+        vector.append(pos_score)
+        vector.append(neg_score)
+        true_pos = pos_score
+        true_neg = neg_score
+        negate_score = 0
+        for negateIndex in negate_index:
+            closest_is_positive = is_closest_sentiment_positive(negateIndex, pos_index, neg_index)
+            if closest_is_positive == True:
+                true_pos -= 1
+            elif closest_is_positive == False:
+                true_neg -= 1
+            else:
+                pass
+            negate_score += calculate_negate_sentiment_score(negateIndex, pos_index, neg_index)
+        accumulative_score = true_pos + negate_score - true_neg
+        vector.append(accumulative_score)
+    
+        return vector
+
+def preprocess_review(review):
+    review_vector = [0,0,0,0,0]
+    review_token = sent_tokenize(review)
+    for sentence in review_token:
+        sentence_vector = preprocess_sentence(sentence)
+        if sentence_vector == None:
+            pass
+        else:
+            review_vector = [sum(i) for i in zip(sentence_vector, review_vector)] 
+    return review_vector
+
+def preprocess_dataframe(list_review):
+    preprocessed = []
+    for review in list_review:
+        preprocessed.append(preprocess_review(review))
+    
+    preprocessed_df = pd.DataFrame(preprocessed, columns=["negation_count", "sentiment_count", "positive_count",
+                                                         "negative_count", "accumulative_score"])
+    return preprocessed_df
+    
+review = data_frame['reviewText'].tolist()
+preprocess_dataframe(review)
